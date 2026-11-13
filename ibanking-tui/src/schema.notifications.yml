@@ -1,0 +1,155 @@
+# Schema dedicado para pruebas aisladas de plantillas Crezcamos notifications.
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: crezcamos-notifications
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        cicd:
+          folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+          repo: "https://github.com/inteclatam/ibanking-cicd"
+          pipelines:
+            - name: czc-real-notifications-smoke
+              description: Prueba aislada de notificaciones Crezcamos contra Apigee real
+              cmd: ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke]
+            - name: czc-real-notifications-smoke-trace
+              description: Prueba aislada de notificaciones Crezcamos con traza JSON diagnostica
+              cmd: CZC_NOTIFICATION_SMOKE_TRACE_JSON=1 INTEGRATIONS_BENTO_REQUEST_LOGS=json ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, trace, diagnostic]
+            - name: rider-notifications-health
+              description: Valida notifications-api ejecutandose desde Rider via api.localtest.me
+              cmd: bash backend/integrations/smoke-rider-notifications.sh health
+              dir: docker
+              tags: [local, rider, notifications, health, smoke]
+            - name: rider-notifications-email-trace
+              description: Prueba api.localtest.me -> notifications-api Rider email -> integration-api -> Bento -> Apigee
+              cmd: bash backend/integrations/smoke-rider-notifications.sh email
+              dir: docker
+              tags: [local, rider, notifications, email, smoke, trace, diagnostic]
+            - name: rider-notifications-template-trace
+              description: Prueba api.localtest.me -> notifications-api Rider template -> integration-api -> Bento -> Apigee
+              cmd: bash backend/integrations/smoke-rider-notifications.sh template
+              dir: docker
+              tags: [local, rider, notifications, template, smoke, trace, diagnostic]
+            - name: czc-real-notifications-notptud
+              description: Prueba notificacion Crezcamos NOTPTUD Usuario Desactivado
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUD ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptud]
+            - name: czc-real-notifications-notptub
+              description: Prueba notificacion Crezcamos NOTPTUB Usuario Bloqueado
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUB ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptub]
+            - name: czc-real-notifications-notptuc
+              description: Prueba notificacion Crezcamos NOTPTUC Usuario Creado
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUC ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptuc]
+            - name: czc-real-notifications-notptuaa
+              description: Prueba notificacion Crezcamos NOTPTUAA Activacion de cuenta
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUAA ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptuaa]
+            - name: czc-real-notifications-notptbur
+              description: Prueba notificacion Crezcamos NOTPTBUR Usuario rechazado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUR ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptbur]
+            - name: czc-real-notifications-notptburc
+              description: Prueba notificacion Crezcamos NOTPTBURC Rol de usuario cambiado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBURC ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptburc]
+            - name: czc-real-notifications-notptbupa
+              description: Prueba notificacion Crezcamos NOTPTBUPA Usuario pendiente por aprobacion interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUPA ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptbupa]
+            - name: czc-real-notifications-notptbua
+              description: Prueba notificacion Crezcamos NOTPTBUA Usuario aprobado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUA ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptbua]
+            - name: czc-real-notifications-notptbud
+              description: Prueba notificacion Crezcamos NOTPTBUD Usuario desactivado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUD ./stack-admin.sh czc-real notifications
+              dir: docker
+              tags: [local, czc, real, apigee, notifications, smoke, template, notptbud]
+            - name: czc-real-onboarding-notifications-smoke
+              description: Prueba notificaciones Crezcamos sin pasar por la saga onboarding
+              cmd: ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke]
+            - name: czc-real-onboarding-notifications-smoke-trace
+              description: Prueba onboarding notificaciones Crezcamos con traza JSON diagnostica
+              cmd: CZC_NOTIFICATION_SMOKE_TRACE_JSON=1 INTEGRATIONS_BENTO_REQUEST_LOGS=json ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, trace, diagnostic]
+            - name: czc-real-onboarding-notifications-notptud
+              description: Prueba onboarding notificacion Crezcamos NOTPTUD Usuario Desactivado
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUD ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptud]
+            - name: czc-real-onboarding-notifications-notptub
+              description: Prueba onboarding notificacion Crezcamos NOTPTUB Usuario Bloqueado
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUB ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptub]
+            - name: czc-real-onboarding-notifications-notptuc
+              description: Prueba onboarding notificacion Crezcamos NOTPTUC Usuario Creado
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUC ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptuc]
+            - name: czc-real-onboarding-notifications-notptuaa
+              description: Prueba onboarding notificacion Crezcamos NOTPTUAA Activacion de cuenta
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTUAA ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptuaa]
+            - name: czc-real-onboarding-notifications-notptbur
+              description: Prueba onboarding notificacion Crezcamos NOTPTBUR Usuario rechazado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUR ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptbur]
+            - name: czc-real-onboarding-notifications-notptburc
+              description: Prueba onboarding notificacion Crezcamos NOTPTBURC Rol de usuario cambiado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBURC ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptburc]
+            - name: czc-real-onboarding-notifications-notptbupa
+              description: Prueba onboarding notificacion Crezcamos NOTPTBUPA Usuario pendiente por aprobacion interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUPA ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptbupa]
+            - name: czc-real-onboarding-notifications-notptbua
+              description: Prueba onboarding notificacion Crezcamos NOTPTBUA Usuario aprobado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUA ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptbua]
+            - name: czc-real-onboarding-notifications-notptbud
+              description: Prueba onboarding notificacion Crezcamos NOTPTBUD Usuario desactivado interno
+              cmd: CZC_NOTIFICATION_SMOKE_CODE=NOTPTBUD ./stack-admin.sh czc-real-onboarding notifications
+              dir: docker
+              tags: [local, czc, real, apigee, onboarding, notifications, smoke, template, notptbud]
+        environments:
+          - name: local-czc-notifications
+            compose:
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.local
+              stacks:
+                - name: czc-real
+                  description: Stack CZC real con Bento notifications y notifications-api
+                  files:
+                    - backend/integrations/compose.czc-real-bentos-dockerhub.yml
+                  tags: [local, czc, real, apigee, notifications]
+                - name: czc-real-onboarding
+                  description: Stack onboarding CZC real con smoke aislado de notifications
+                  files:
+                    - backend/integrations/compose.czc-real-bentos-dockerhub.yml
+                    - backend/integrations/compose.czc-onboarding-e2e-real.yml
+                  tags: [local, czc, real, apigee, onboarding, notifications]
+parameters:
+  - theme: gruvbox

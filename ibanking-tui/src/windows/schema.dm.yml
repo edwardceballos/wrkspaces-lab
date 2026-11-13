@@ -1,0 +1,1407 @@
+# IDP catalog schema
+# type enum: ui | api | mobile | service
+# Convention:
+#   - folder        : component root (open IDE here)
+#   - srcfolder     : local source code folder
+#   - testfolder    : local tests folder
+#   - scriptsfolder : local scripts folder
+#   - ide           : only meaningful on local environments
+#   - urls          : per-environment service links (deployed on remote envs)
+#   - compose       : Docker Compose stacks for an environment (built-in actions:
+#                     up/down/logs/ps/restart/pull). Mirrors local-menu.sh.
+
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: crezcamos-enterprise
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        cicd:
+          folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+          repo: "https://github.com/inteclatam/ibanking-cicd"
+          actions:
+            repo: inteclatam/ibanking-cicd
+            # workflows: [ci.yml, deploy.yml]   # opcional: filtrar por workflow
+          pipelines:
+            - {
+                name: build-images,
+                description: Construye imágenes locales de la plataforma,
+                cmd: bash ./docker/_scripts/publish-local-images.sh build all,
+                tags: [build, images, local],
+              }
+            - {
+                name: push-images,
+                description: Publica imágenes locales al registry configurado,
+                cmd: bash ./docker/_scripts/publish-local-images.sh push all,
+                tags: [push, images, registry],
+              }
+            - {
+                name: czc-stack-publish-local,
+                description: Construye y publica imágenes DockerHub CZC para local dev,
+                cmd: DOCKERHUB_REPO=inteclatamcr IMAGE_TAG=local bash ./docker/_scripts/publish-local-images.sh publish czc-stack local,
+                tags: [build, push, images, dockerhub, czc, local],
+              }
+            - {
+                name: export-bundle,
+                description: Exporta bundle de despliegue Crezcamos pre,
+                cmd: ./scripts/export-bank-deploy-bundle.sh --tenant czc --env pre,
+                tags: [deploy, bundle, czc, pre],
+              }
+            - {
+                name: deploy-pre,
+                description: Ejecuta despliegue pre configurado,
+                cmd: ./scripts/deploy.sh pre,
+                tags: [deploy, pre],
+              }
+        environments:
+          - name: local
+            ide: rider # rider | code | nvim
+            urls:
+              - name: 🐇 RabbitMQ
+                url: http://localhost:15672
+              - name: 🛡️ Keycloak Admin
+                url: http://localhost:8080/admin
+              - name: 📫 Mailpit
+                url: http://localhost:8025
+              - name: 🏦 Banking UI
+                url: http://localhost:3000
+              - name: 📖 API Swagger
+                url: http://localhost:5000/swagger
+              - name: 🗄️ Adminer (Postgres)
+                url: http://localhost:8081
+            compose:
+              # Override env-file at runtime with IBANKING_ENV_FILE.
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.local
+              stacks:
+                - name: full-local
+                  description: Stack completo local (infra + backend + frontend)
+                  files: [compose.local.yml]
+                  tags: [local, full, dev]
+                - name: full-local-ports
+                  description: Stack completo local con puertos de infra expuestos
+                  files: [compose.local.yml, compose.local.override.yml]
+                  tags: [local, full, ports, dev]
+                - name: infra-ports
+                  description: Infra + ACME Core local con puertos expuestos al host
+                  files:
+                    - infra/compose-infra.yml
+                    - infra/core/compose.local-acme-core.yml
+                    - compose.local.override.yml
+                  tags: [local, infra, core, ports, dev]
+                - name: acme-core
+                  description: ACME Core Banking local desde fuente + infra requerida
+                  files:
+                    - infra/compose-infra.yml
+                    - infra/core/compose.local-acme-core.yml
+                  tags: [local, core, infra]
+                - name: backend
+                  description: Solo microservicios .NET desde fuente
+                  files: [backend/compose.local-backend.yml]
+                  tags: [local, backend]
+                - name: backend-ports
+                  description: Backend local + infra + ACME con puertos de infra expuestos
+                  files:
+                    - backend/compose.local-backend.yml
+                    - compose.local.override.yml
+                  tags: [local, backend, ports, dev]
+                - name: frontend
+                  description: Solo frontends Nx/React desde fuente
+                  files:
+                    - infra/compose-networks.yml
+                    - frontend/compose.local-frontends.yml
+                  tags: [local, frontend]
+                - name: enterprise-banking
+                  description: Canal Enterprise Banking publicado (infra + ACME + APIs EB + frontend EB)
+                  files: [compose.ibanking-eb.yml]
+                  tags: [local, published, eb]
+                - name: system-management
+                  description: Backoffice System Management publicado (infra + ACME + APIs SM + frontend SM)
+                  files: [compose.ibanking-sm.yml]
+                  tags: [local, published, sm]
+                - name: frontend-eb
+                  description: Solo frontends Enterprise Banking
+                  files:
+                    [
+                      frontend/enterprise-banking/compose-frontends-enterprise-banking.yml,
+                    ]
+                  tags: [local, frontend, eb]
+                - name: frontend-sm
+                  description: Solo frontends System Management
+                  files:
+                    [
+                      frontend/system-management/compose-frontends-system-management.yml,
+                    ]
+                  tags: [local, frontend, sm]
+                - name: infra-only
+                  description: Solo infraestructura (Caddy, Traefik, Keycloak, RabbitMQ, storage, observabilidad)
+                  files: [infra/compose-infra.yml]
+                  tags: [local, infra]
+                - name: infra-only-ports
+                  description: Solo infraestructura con puertos expuestos para probar APIs y frontends desde el host
+                  files: [infra/compose-infra.yml, compose.local.override.yml]
+                  tags: [local, infra, ports, dev]
+                - name: support
+                  description: Contexto support local (infra + DBs + catalogs/files/notifications)
+                  files: [backend/compose.local-support-stack.yml]
+                  tags: [local, context, backend]
+                - name: iam
+                  description: Contexto IAM local (infra + DBs + tenants/profiles/mfa + IntecID)
+                  files: [backend/compose.local-iam-stack.yml]
+                  tags: [local, context, backend]
+                - name: customers
+                  description: Contexto customers local (infra + DBs + customers/onboardings)
+                  files: [backend/compose.local-customers-stack.yml]
+                  tags: [local, context, backend]
+                - name: products
+                  description: Contexto products local (infra + DBs + products/accounts/loans/investments/cards)
+                  files: [backend/compose.local-products-stack.yml]
+                  tags: [local, context, backend]
+                - name: transactions
+                  description: Contexto transactions local (infra + DBs + transactions/payments/transfers/processes)
+                  files: [backend/compose.local-transactions-stack.yml]
+                  tags: [local, context, backend]
+                - name: compliance
+                  description: Contexto compliance local (infra + DBs + legals/reports)
+                  files: [backend/compose.local-compliance-stack.yml]
+                  tags: [local, context, backend]
+                - name: integrations
+                  description: Contexto integrations local (infra + ACME + DB + Bento ints + API)
+                  files: [backend/compose.local-integrations-stack.yml]
+                  tags: [local, context, backend, czc]
+                - name: czc-real-hub
+                  description: Integraciones CZC desde imágenes DockerHub contra Apigee real
+                  files: [backend/compose.local-integrations-czc-dockerhub-stack.yml]
+                  tags: [local, context, backend, czc, dockerhub, real]
+                - name: czc-mock-hub
+                  description: Onboarding CZC mock desde imágenes DockerHub
+                  files:
+                    - backend/compose.local-integrations-czc-dockerhub-stack.yml
+                    - backend/integrations/compose.czc-onboarding-e2e-mock-dockerhub.yml
+                  tags: [local, context, backend, czc, dockerhub, mock]
+                - name: czc-real-onboarding-hub
+                  description: Onboarding CZC real desde imágenes DockerHub con monitoreo
+                  files:
+                    - backend/compose.local-integrations-czc-dockerhub-stack.yml
+                    - backend/integrations/compose.czc-onboarding-e2e-mock-dockerhub.yml
+                    - backend/integrations/compose.czc-onboarding-platform-apis-dockerhub.yml
+                    - backend/integrations/compose.czc-onboarding-e2e-real-dockerhub.yml
+                    - infra/monitoring/compose-uptime-kuma.yml
+                  tags: [local, context, backend, czc, dockerhub, real, onboarding]
+                - name: akamai-external-db-hub
+                  description: Stack backend DockerHub con PostgreSQL externo Akamai por túnel SSH local
+                  files:
+                    - compose.akamai-external-db-hub.yml
+                    - compose.akamai-local-tunnel.yml
+                  tags: [local, akamai, external-db, dockerhub, tunnel, backend]
+          - name: akamai-demo
+            urls:
+              - name: 🏦 Banking UI
+                url: https://demo.crezcamos.inteclatam.com
+              - name: 🛡️ Keycloak Admin
+                url: https://auth.demo.crezcamos.inteclatam.com/admin
+              - name: 📖 API Swagger
+                url: https://api.demo.crezcamos.inteclatam.com/swagger
+          - name: gcp-crezcamos-pre
+            urls:
+              - name: 🏦 Banking UI
+                url: https://pre.crezcamos.inteclatam.com
+              - name: 🛡️ Keycloak Admin
+                url: https://auth.pre.crezcamos.inteclatam.com/admin
+              - name: 📖 API Swagger
+                url: https://api.pre.crezcamos.inteclatam.com/swagger
+              - name: 📊 Grafana
+                url: https://grafana.pre.crezcamos.inteclatam.com
+        components:
+          - name: system-management
+            description: Admin web UI for tenants, IAM and system configuration.
+            layer: frontend
+            type: ui
+            tags: [react, admin, iam, web, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /apps/system-management
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/system-management
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/system-management/src
+            testfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/system-management/tests
+            scriptsfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/system-management/scripts
+            commands:
+              run: npm run dev
+              test: npm test
+              build: npm run build
+
+          - name: enterprise-banking
+            description: Main customer-facing banking web frontend.
+            layer: frontend
+            type: ui
+            tags: [react, banking, web, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /apps/banking
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/banking
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/banking/src
+            testfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/banking/tests
+            scriptsfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/banking/scripts
+            commands:
+              run: npm run dev
+              test: npm test
+              build: npm run build
+              extra:
+                - { name: lint, cmd: npm run lint }
+                - { name: e2e, cmd: npm run test:e2e, dir: ./e2e }
+                - { name: storybook, cmd: npm run storybook }
+
+          - name: mobile-otp
+            description: React Native mobile app for OTP / second-factor auth.
+            layer: frontend
+            type: mobile
+            tags: [react-native, mobile, otp, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /apps/mobile-otp
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/mobile-otp
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/mobile-otp/src
+            testfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/mobile-otp/tests
+            scriptsfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/apps/mobile-otp/scripts
+            commands:
+              run: npm run start
+              test: npm test
+              build: npm run build
+
+          - name: tenants-api
+            description: .NET service that manages tenants under IAM.
+            layer: backend
+            type: api
+            tags: [dotnet, banking, iam, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/iam/tenants
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/tenants
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/tenants/src/api
+            testfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/tenants/tests
+            scriptsfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/tenants/scripts
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: ibanking-frontend
+            description: Nx monorepo root for all React and React Native frontends.
+            layer: frontend
+            type: ui
+            tags: [nx, react, monorepo, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/libs
+            commands:
+              test: npx nx run-many --target=test
+              build: npx nx run-many --target=build
+              extra:
+                - { name: lint, cmd: npx nx run-many --target=lint }
+
+          - name: ibanking-backend
+            description: .NET solution root for all backend microservices.
+            layer: backend
+            type: api
+            tags: [dotnet, banking, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services
+            commands:
+              test: dotnet test
+              build: dotnet build
+
+          - name: ibanking-cicd
+            description: CI/CD scripts and Docker Compose stacks for all environments.
+            layer: infra
+            type: service
+            tags: [cicd, docker, scripts, intec]
+            repo: "https://github.com/inteclatam/ibanking-cicd"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            scriptsfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/scripts
+            commands:
+              extra:
+                - name: stacks-list
+                  description: Lista stacks administrados por stack-admin.sh
+                  dir: docker
+                  cmd: ./stack-admin.sh list
+                  tags: [local, stack, list]
+                - name: local-menu
+                  description: Abre el menú local interactivo de Docker Compose
+                  dir: docker
+                  cmd: ./local-menu.sh
+                  tags: [local, menu, stack]
+                - name: crezcamos-menu
+                  description: Abre el menú interactivo de Crezcamos
+                  dir: docker
+                  cmd: ./crezcamos-menu.sh
+                  tags: [local, menu, czc]
+                - name: full-local-up
+                  description: Levanta el stack local completo
+                  dir: docker
+                  cmd: ./stack-admin.sh full-local up
+                  tags: [local, full, up]
+                - name: full-local-ps
+                  description: Lista servicios del stack local completo
+                  dir: docker
+                  cmd: ./stack-admin.sh full-local ps
+                  tags: [local, full, ps, status]
+                - name: full-local-logs
+                  description: Muestra logs del stack local completo
+                  dir: docker
+                  cmd: ./stack-admin.sh full-local logs
+                  tags: [local, full, logs, debug]
+                - name: full-local-down
+                  description: Detiene el stack local completo sin borrar volúmenes
+                  dir: docker
+                  cmd: ./stack-admin.sh full-local down
+                  tags: [local, full, down]
+                - name: backend-up
+                  description: Levanta backend local
+                  dir: docker
+                  cmd: ./stack-admin.sh backend up
+                  tags: [local, backend, up]
+                - name: backend-ps
+                  description: Lista servicios backend locales
+                  dir: docker
+                  cmd: ./stack-admin.sh backend ps
+                  tags: [local, backend, ps, status]
+                - name: backend-logs
+                  description: Muestra logs backend locales
+                  dir: docker
+                  cmd: ./stack-admin.sh backend logs
+                  tags: [local, backend, logs, debug]
+                - name: frontend-up
+                  description: Levanta frontends locales
+                  dir: docker
+                  cmd: ./stack-admin.sh frontend up
+                  tags: [local, frontend, up]
+                - name: frontend-ps
+                  description: Lista servicios frontend locales
+                  dir: docker
+                  cmd: ./stack-admin.sh frontend ps
+                  tags: [local, frontend, ps, status]
+                - name: system-management-up
+                  description: Levanta System Management publicado local
+                  dir: docker
+                  cmd: ./stack-admin.sh system-management up
+                  tags: [local, frontend, sm, up]
+                - name: enterprise-banking-up
+                  description: Levanta Enterprise Banking publicado local
+                  dir: docker
+                  cmd: ./stack-admin.sh enterprise-banking up
+                  tags: [local, frontend, eb, up]
+                - name: czc-mock-up
+                  description: Levanta stack CZC con Bento mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock up
+                  tags: [local, czc, mock, up]
+                - name: czc-mock-ps
+                  description: Lista servicios del stack CZC mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock ps
+                  tags: [local, czc, mock, ps, status]
+                - name: czc-mock-logs
+                  description: Muestra logs del stack CZC mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock logs
+                  tags: [local, czc, mock, logs, debug]
+                - name: czc-mock-config-check
+                  description: Valida compose efectivo del stack CZC mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock config-check
+                  tags: [local, czc, mock, config, check]
+                - name: czc-mock-smoke
+                  description: Ejecuta smoke E2E onboarding contra Bento mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock smoke
+                  tags: [local, czc, mock, smoke, onboarding]
+                - name: czc-mock-up-smoke
+                  description: Levanta stack CZC mock y ejecuta smoke E2E
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock up && ./stack-admin.sh czc-mock smoke
+                  tags: [local, czc, mock, up, smoke, onboarding]
+                - name: czc-mock-down
+                  description: Detiene stack CZC mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock down
+                  tags: [local, czc, mock, down]
+                - name: czc-real-up
+                  description: Levanta stack CZC contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real up
+                  tags: [local, czc, real, apigee, up]
+                - name: czc-real-ps
+                  description: Lista servicios del stack CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real ps
+                  tags: [local, czc, real, apigee, ps, status]
+                - name: czc-real-logs
+                  description: Muestra logs del stack CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real logs
+                  tags: [local, czc, real, apigee, logs, debug]
+                - name: czc-real-config-check
+                  description: Valida compose efectivo del stack CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real config-check
+                  tags: [local, czc, real, apigee, config, check]
+                - name: czc-real-smoke
+                  description: Ejecuta smoke E2E contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke]
+                - name: czc-real-notifications-smoke
+                  description: Prueba aislada de notificaciones Crezcamos contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real notifications
+                  tags: [local, czc, real, apigee, notifications, smoke]
+                - name: czc-real-smoke-single
+                  description: Ejecuta smoke real single usando documento por defecto/env
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single]
+                - name: czc-real-smoke-single-nit-900118700
+                  description: Smoke real single NIT 900118700
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=NIT CZC_SMOKE_DOCUMENT_NUMBER=900118700 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, nit]
+                - name: czc-real-smoke-single-nit-901576311
+                  description: Smoke real single NIT 901576311
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=NIT CZC_SMOKE_DOCUMENT_NUMBER=901576311 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, nit]
+                - name: czc-real-smoke-single-nit-890200106
+                  description: Smoke real single NIT 890200106
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=NIT CZC_SMOKE_DOCUMENT_NUMBER=890200106 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, nit]
+                - name: czc-real-smoke-single-cc-37746390
+                  description: Smoke real single CC 37746390
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=CC CZC_SMOKE_DOCUMENT_NUMBER=37746390 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, cc]
+                - name: czc-real-smoke-single-cc-1092348543
+                  description: Smoke real single CC 1092348543
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=CC CZC_SMOKE_DOCUMENT_NUMBER=1092348543 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, cc]
+                - name: czc-real-smoke-single-cc-1005371964
+                  description: Smoke real single CC 1005371964
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=CC CZC_SMOKE_DOCUMENT_NUMBER=1005371964 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, cc]
+                - name: czc-real-smoke-single-cc-1000126844
+                  description: Smoke real single CC 1000126844
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=CC CZC_SMOKE_DOCUMENT_NUMBER=1000126844 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, cc]
+                - name: czc-real-smoke-single-cc-3055758
+                  description: Smoke real single CC 3055758
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=CC CZC_SMOKE_DOCUMENT_NUMBER=3055758 ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, smoke, single, cc]
+                - name: czc-real-up-smoke
+                  description: Levanta stack CZC real y ejecuta smoke E2E
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real up && ./stack-admin.sh czc-real smoke
+                  tags: [local, czc, real, apigee, up, smoke]
+                - name: czc-real-down
+                  description: Detiene stack CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real down
+                  tags: [local, czc, real, apigee, down]
+                - name: czc-real-onboarding-up
+                  description: Levanta stack onboarding CZC contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding up
+                  tags: [local, czc, real, apigee, onboarding, up]
+                - name: czc-real-onboarding-ps
+                  description: Lista servicios onboarding CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding ps
+                  tags: [local, czc, real, apigee, onboarding, ps, status]
+                - name: czc-real-onboarding-logs
+                  description: Muestra logs onboarding CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding logs
+                  tags: [local, czc, real, apigee, onboarding, logs, debug]
+                - name: czc-real-onboarding-config-check
+                  description: Valida compose onboarding CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding config-check
+                  tags: [local, czc, real, apigee, onboarding, config, check]
+                - name: czc-real-onboarding-smoke
+                  description: Ejecuta smoke completo onboarding CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding smoke
+                  tags: [local, czc, real, apigee, onboarding, smoke]
+                - name: czc-real-onboarding-notifications-smoke
+                  description: Prueba notificaciones Crezcamos sin pasar por la saga onboarding
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding notifications
+                  tags: [local, czc, real, apigee, onboarding, notifications, smoke]
+                - name: czc-real-onboarding-smoke-single
+                  description: Ejecuta smoke onboarding real single usando documento por defecto/env
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false ./stack-admin.sh czc-real-onboarding smoke
+                  tags: [local, czc, real, apigee, onboarding, smoke, single]
+                - name: czc-real-onboarding-smoke-single-nit-900118700
+                  description: Smoke onboarding real single NIT 900118700
+                  dir: docker
+                  cmd: CZC_SMOKE_RUN_SET=false CZC_SMOKE_DOCUMENT_TYPE=NIT CZC_SMOKE_DOCUMENT_NUMBER=900118700 ./stack-admin.sh czc-real-onboarding smoke
+                  tags: [local, czc, real, apigee, onboarding, smoke, single, nit]
+                - name: czc-real-onboarding-up-smoke
+                  description: Levanta onboarding CZC real y ejecuta smoke completo
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding up && ./stack-admin.sh czc-real-onboarding smoke
+                  tags: [local, czc, real, apigee, onboarding, up, smoke]
+                - name: czc-real-onboarding-down
+                  description: Detiene onboarding CZC real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding down
+                  tags: [local, czc, real, apigee, onboarding, down]
+                - name: czc-stack-publish-local
+                  description: Construye y publica imágenes DockerHub CZC para local dev
+                  dir: docker
+                  cmd: DOCKERHUB_REPO=inteclatamcr IMAGE_TAG=local bash ./_scripts/publish-local-images.sh publish czc-stack local
+                  tags: [local, czc, dockerhub, images, build, push]
+                - name: czc-real-hub-up
+                  description: Levanta stack CZC DockerHub contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-hub up
+                  tags: [local, czc, dockerhub, real, apigee, up]
+                - name: czc-real-hub-ps
+                  description: Lista servicios del stack CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-hub ps
+                  tags: [local, czc, dockerhub, real, apigee, ps, status]
+                - name: czc-real-hub-logs
+                  description: Muestra logs del stack CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-hub logs
+                  tags: [local, czc, dockerhub, real, apigee, logs, debug]
+                - name: czc-real-hub-config-check
+                  description: Valida compose efectivo del stack CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-hub config-check
+                  tags: [local, czc, dockerhub, real, apigee, config, check]
+                - name: czc-real-hub-smoke
+                  description: Ejecuta smoke E2E CZC DockerHub contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-hub smoke
+                  tags: [local, czc, dockerhub, real, apigee, smoke]
+                - name: czc-real-hub-down
+                  description: Detiene stack CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-hub down
+                  tags: [local, czc, dockerhub, real, apigee, down]
+                - name: czc-mock-hub-up
+                  description: Levanta stack CZC DockerHub con Bento mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock-hub up
+                  tags: [local, czc, dockerhub, mock, up]
+                - name: czc-mock-hub-config-check
+                  description: Valida compose efectivo del stack CZC DockerHub mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock-hub config-check
+                  tags: [local, czc, dockerhub, mock, config, check]
+                - name: czc-mock-hub-smoke
+                  description: Ejecuta smoke E2E onboarding contra CZC DockerHub mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock-hub smoke
+                  tags: [local, czc, dockerhub, mock, smoke, onboarding]
+                - name: czc-mock-hub-up-smoke
+                  description: Levanta stack CZC DockerHub mock y ejecuta smoke E2E
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock-hub up && ./stack-admin.sh czc-mock-hub smoke
+                  tags: [local, czc, dockerhub, mock, up, smoke, onboarding]
+                - name: czc-mock-hub-down
+                  description: Detiene stack CZC DockerHub mock
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-mock-hub down
+                  tags: [local, czc, dockerhub, mock, down]
+                - name: czc-real-onboarding-hub-up
+                  description: Levanta onboarding CZC DockerHub contra Apigee real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding-hub up
+                  tags: [local, czc, dockerhub, real, apigee, onboarding, up]
+                - name: czc-real-onboarding-hub-config-check
+                  description: Valida compose onboarding CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding-hub config-check
+                  tags: [local, czc, dockerhub, real, apigee, onboarding, config, check]
+                - name: czc-real-onboarding-hub-smoke
+                  description: Ejecuta smoke completo onboarding CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding-hub smoke
+                  tags: [local, czc, dockerhub, real, apigee, onboarding, smoke]
+                - name: czc-real-onboarding-hub-up-smoke
+                  description: Levanta onboarding CZC DockerHub real y ejecuta smoke completo
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding-hub up && ./stack-admin.sh czc-real-onboarding-hub smoke
+                  tags: [local, czc, dockerhub, real, apigee, onboarding, up, smoke]
+                - name: czc-real-onboarding-hub-down
+                  description: Detiene onboarding CZC DockerHub real
+                  dir: docker
+                  cmd: ./stack-admin.sh czc-real-onboarding-hub down
+                  tags: [local, czc, dockerhub, real, apigee, onboarding, down]
+                - name: akamai-external-db-hub-up
+                  description: Levanta stack backend DockerHub usando PostgreSQL externo Akamai por túnel SSH local
+                  dir: docker
+                  cmd: ./stack-admin.sh akamai-external-db-hub up
+                  tags: [local, akamai, external-db, dockerhub, tunnel, up]
+                - name: akamai-external-db-hub-ps
+                  description: Lista servicios del stack Akamai external-db DockerHub
+                  dir: docker
+                  cmd: ./stack-admin.sh akamai-external-db-hub ps
+                  tags: [local, akamai, external-db, dockerhub, tunnel, ps, status]
+                - name: akamai-external-db-hub-logs
+                  description: Muestra logs del stack Akamai external-db DockerHub
+                  dir: docker
+                  cmd: ./stack-admin.sh akamai-external-db-hub logs
+                  tags: [local, akamai, external-db, dockerhub, tunnel, logs, debug]
+                - name: akamai-external-db-hub-config-check
+                  description: Valida compose efectivo del stack Akamai external-db DockerHub
+                  dir: docker
+                  cmd: ./stack-admin.sh akamai-external-db-hub config-check
+                  tags: [local, akamai, external-db, dockerhub, tunnel, config, check]
+                - name: akamai-external-db-hub-down
+                  description: Detiene stack Akamai external-db DockerHub
+                  dir: docker
+                  cmd: ./stack-admin.sh akamai-external-db-hub down
+                  tags: [local, akamai, external-db, dockerhub, tunnel, down]
+                - name: czc-up-mock
+                  description: Levanta integración CZC mock con docker-compose directo
+                  dir: docker
+                  cmd: >-
+                    COMPOSE="${IBANKING_COMPOSE_CMD:-docker-compose}";
+                    ${COMPOSE} --env-file "${IBANKING_ENV_FILE:-.env.local}"
+                    -f backend/compose.local-integrations-czc-stack.yml
+                    -f backend/integrations/compose.czc-onboarding-e2e-mock.yml
+                    up -d
+                  tags: [local, czc, mock, compose, up]
+                - name: czc-smoke-mock
+                  description: Ejecuta script smoke CZC mock directo
+                  dir: docker
+                  cmd: backend/integrations/smoke-czc-onboarding-e2e-mock.sh
+                  tags: [local, czc, mock, smoke, onboarding]
+                - name: czc-up-smoke-mock
+                  description: Levanta integración CZC mock y ejecuta smoke directo
+                  dir: docker
+                  cmd: >-
+                    COMPOSE="${IBANKING_COMPOSE_CMD:-docker-compose}";
+                    ${COMPOSE} --env-file "${IBANKING_ENV_FILE:-.env.local}"
+                    -f backend/compose.local-integrations-czc-stack.yml
+                    -f backend/integrations/compose.czc-onboarding-e2e-mock.yml
+                    up -d &&
+                    backend/integrations/smoke-czc-onboarding-e2e-mock.sh
+                  tags: [local, czc, mock, compose, up, smoke, onboarding]
+                - name: czc-up-real
+                  description: Levanta integración CZC real con docker-compose directo
+                  dir: docker
+                  cmd: >-
+                    COMPOSE="${IBANKING_COMPOSE_CMD:-docker-compose}";
+                    ${COMPOSE} --env-file "${IBANKING_ENV_FILE:-.env.local}"
+                    -f backend/compose.local-integrations-czc-stack.yml
+                    up -d
+                  tags: [local, czc, real, apigee, compose, up]
+                - name: czc-smoke-real
+                  description: Ejecuta script smoke CZC real directo
+                  dir: docker
+                  cmd: backend/integrations/smoke-czc-e2e.sh
+                  tags: [local, czc, real, apigee, smoke]
+                - name: czc-up-smoke-real
+                  description: Levanta integración CZC real y ejecuta smoke directo
+                  dir: docker
+                  cmd: >-
+                    COMPOSE="${IBANKING_COMPOSE_CMD:-docker-compose}";
+                    ${COMPOSE} --env-file "${IBANKING_ENV_FILE:-.env.local}"
+                    -f backend/compose.local-integrations-czc-stack.yml
+                    up -d &&
+                    backend/integrations/smoke-czc-e2e.sh
+                  tags: [local, czc, real, apigee, compose, up, smoke]
+                - name: gcp-czc-pre-deploy-external-db-dry-run
+                  description: Simula despliegue GCP Crezcamos pre usando base externa configurada
+                  dir: .
+                  cmd: ./gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer all --dry-run
+                  tags: [deploy, gcp, czc, pre, external-db, no-db, dry-run]
+                - name: gcp-czc-pre-deploy-external-db
+                  description: Despliega GCP Crezcamos pre usando base externa configurada
+                  dir: .
+                  cmd: ./gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer all
+                  tags: [deploy, gcp, czc, pre, external-db, no-db]
+                - name: akamai-czc-pre-deploy-external-db-placeholder
+                  description: Placeholder; no hay script Akamai versionado aún. Documenta la intención sin ejecutar despliegue.
+                  dir: .
+                  cmd: >-
+                    printf '%s\n' 'Pendiente: implementar script Akamai Crezcamos external-db/no-db en ibanking-cicd/akamai.'
+                  tags: [deploy, akamai, czc, pre, external-db, no-db, placeholder]
+
+          # ── Frontend shells ────────────────────────────────────────────────
+
+          - name: shell-enterprise-banking
+            description: Enterprise Banking Module Federation shell host.
+            layer: frontend
+            type: ui
+            tags: [nx, react, shell, mfe, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/shell-enterprise-banking
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/shell-enterprise-banking
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/shell-enterprise-banking/src
+            commands:
+              run: npx nx serve shell-enterprise-banking
+              test: npx nx test shell-enterprise-banking
+              build: npx nx build shell-enterprise-banking
+
+          - name: shell-system-management
+            description: System Management backoffice Module Federation shell host.
+            layer: frontend
+            type: ui
+            tags: [nx, react, shell, mfe, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/shell-system-management
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/shell-system-management
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/shell-system-management/src
+            commands:
+              run: npx nx serve shell-system-management
+              test: npx nx test shell-system-management
+              build: npx nx build shell-system-management
+              extra:
+                - name: run-akamai-external-db-hub
+                  description: Ejecuta System Management y remotes locales apuntando al stack backend Akamai external-db
+                  cmd: >-
+                    NX_DAEMON=false
+                    MF_ENV=local
+                    NX_PUBLIC_FRONTEND_ENV=local
+                    NX_DEV_SSL_CERT="$PWD/.certs/localtest-cert.pem"
+                    NX_DEV_SSL_KEY="$PWD/.certs/localtest-key.pem"
+                    NX_PUBLIC_SHELL_URL=https://localhost:4200/remoteEntry.js
+                    NX_PUBLIC_OIDC_AUTHORITY=http://auth.localtest.me:8080/realms/intec-banking
+                    NX_PUBLIC_OIDC_CLIENT_ID=intec.test
+                    NX_PUBLIC_OIDC_SCOPE=openid
+                    NX_PUBLIC_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_BFF_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_USERS_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_USERS_API_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_SM_USERS_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_CATALOGS_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_CATALOGS_API_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_SM_CATALOGS_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_ONBOARDING_API_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_SM_ONBOARDING_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_TENANTS_API_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_SM_TENANTS_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_INTEGRATIONS_API_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_SM_INTEGRATIONS_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_LEGAL_API_PROXY_TARGET=http://api.localtest.me
+                    NX_PUBLIC_SM_LEGAL_API_BASE_URL=http://api.localtest.me
+                    NX_PUBLIC_SM_MFA_API_PROXY_TARGET=http://api.localtest.me
+                    npx nx run-many --target=serve --projects=shell-system-management,remote_sm_tenants,remote_sm_catalogs,remote_sm_onboarding,remote_sm_legal,remote_sm_mfa,remote_sm_marketplace,remote_sm_status,remote_sm_users --parallel=9
+                  tags: [local, sm, akamai, external-db, bff, backend]
+
+          # ── Frontend remote modules EB ─────────────────────────────────────
+
+          - name: remote_eb_marketing
+            description: Enterprise Banking marketing remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_marketing
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_marketing
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_marketing/src
+            commands:
+              run: npx nx serve remote_eb_marketing
+              test: npx nx test remote_eb_marketing
+              build: npx nx build remote_eb_marketing
+
+          - name: remote_eb_mfa
+            description: Enterprise Banking multi-factor auth remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_mfa
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_mfa
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_mfa/src
+            commands:
+              run: npx nx serve remote_eb_mfa
+              test: npx nx test remote_eb_mfa
+              build: npx nx build remote_eb_mfa
+
+          - name: remote_eb_payments
+            description: Enterprise Banking payments remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_payments
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_payments
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_payments/src
+            commands:
+              run: npx nx serve remote_eb_payments
+              test: npx nx test remote_eb_payments
+              build: npx nx build remote_eb_payments
+
+          - name: remote_eb_processes
+            description: Enterprise Banking batch processes remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_processes
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_processes
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_processes/src
+            commands:
+              run: npx nx serve remote_eb_processes
+              test: npx nx test remote_eb_processes
+              build: npx nx build remote_eb_processes
+
+          - name: remote_eb_products
+            description: Enterprise Banking products catalog remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_products
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_products
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_products/src
+            commands:
+              run: npx nx serve remote_eb_products
+              test: npx nx test remote_eb_products
+              build: npx nx build remote_eb_products
+
+          - name: remote_eb_profiles
+            description: Enterprise Banking user profiles remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_profiles
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_profiles
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_profiles/src
+            commands:
+              run: npx nx serve remote_eb_profiles
+              test: npx nx test remote_eb_profiles
+              build: npx nx build remote_eb_profiles
+
+          - name: remote_eb_transfers
+            description: Enterprise Banking fund transfers remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_transfers
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_transfers
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_transfers/src
+            commands:
+              run: npx nx serve remote_eb_transfers
+              test: npx nx test remote_eb_transfers
+              build: npx nx build remote_eb_transfers
+
+          - name: remote_sm_users
+            description: Enterprise Banking user management remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_users
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_users
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_users/src
+            commands:
+              run: npx nx serve remote_sm_users
+              test: npx nx test remote_sm_users
+              build: npx nx build remote_sm_users
+
+          - name: remote_eb_users
+            description: Enterprise Banking user management remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, eb, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_eb_users
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_users
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_eb_users/src
+            commands:
+              run: npx nx serve remote_eb_users
+              test: npx nx test remote_eb_users
+              build: npx nx build remote_eb_users
+
+          # ── Frontend remote modules SM ─────────────────────────────────────
+
+          - name: remote_sm_catalogs
+            description: System Management master catalogs admin remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_catalogs
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_catalogs
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_catalogs/src
+            commands:
+              run: npx nx serve remote_sm_catalogs
+              test: npx nx test remote_sm_catalogs
+              build: npx nx build remote_sm_catalogs
+
+          - name: remote_sm_integration
+            description: System Management integrations configuration remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_integration
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_integration
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_integration/src
+            commands:
+              run: npx nx serve remote_sm_integration
+              test: npx nx test remote_sm_integration
+              build: npx nx build remote_sm_integration
+
+          - name: remote_sm_legal
+            description: System Management legal and compliance docs remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_legal
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_legal
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_legal/src
+            commands:
+              run: npx nx serve remote_sm_legal
+              test: npx nx test remote_sm_legal
+              build: npx nx build remote_sm_legal
+
+          - name: remote_sm_marketplace
+            description: System Management internal marketplace remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_marketplace
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_marketplace
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_marketplace/src
+            commands:
+              run: npx nx serve remote_sm_marketplace
+              test: npx nx test remote_sm_marketplace
+              build: npx nx build remote_sm_marketplace
+
+          - name: remote_sm_mfa
+            description: System Management MFA settings admin remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_mfa
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_mfa
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_mfa/src
+            commands:
+              run: npx nx serve remote_sm_mfa
+              test: npx nx test remote_sm_mfa
+              build: npx nx build remote_sm_mfa
+
+          - name: remote_sm_onboarding
+            description: System Management customer onboarding flows remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_onboarding
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_onboarding
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_onboarding/src
+            commands:
+              run: npx nx serve remote_sm_onboarding
+              test: npx nx test remote_sm_onboarding
+              build: npx nx build remote_sm_onboarding
+
+          - name: remote_sm_status
+            description: System Management system status dashboard remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_status
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_status
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_status/src
+            commands:
+              run: npx nx serve remote_sm_status
+              test: npx nx test remote_sm_status
+              build: npx nx build remote_sm_status
+
+          - name: remote_sm_tenants
+            description: System Management tenant management admin remote module.
+            layer: frontend
+            type: ui
+            tags: [nx, react, remote, sm, intec]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            repo-path: /src/remote_sm_tenants
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_tenants
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src/remote_sm_tenants/src
+            commands:
+              run: npx nx serve remote_sm_tenants
+              test: npx nx test remote_sm_tenants
+              build: npx nx build remote_sm_tenants
+
+          # ── Backend IAM ────────────────────────────────────────────────────
+
+          - name: users
+            description: User authentication and account management service.
+            layer: backend
+            type: api
+            tags: [dotnet, iam, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/iam/users
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/users
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/users/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: profiles
+            description: User profile management service.
+            layer: backend
+            type: api
+            tags: [dotnet, iam, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/iam/profiles
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/profiles
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/profiles/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: mfa
+            description: Multi-factor authentication service.
+            layer: backend
+            type: api
+            tags: [dotnet, iam, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/iam/mfa
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/mfa
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/mfa/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: billing
+            description: Billing and subscription management service.
+            layer: backend
+            type: api
+            tags: [dotnet, iam, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/iam/billing
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/billing
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/iam/billing/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Customers ──────────────────────────────────────────────
+
+          - name: customers
+            description: Customer master data service.
+            layer: backend
+            type: api
+            tags: [dotnet, customers, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/customers/customers
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/customers/customers
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/customers/customers/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: onboarding
+            description: Customer onboarding and KYC service.
+            layer: backend
+            type: api
+            tags: [dotnet, customers, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/customers/onboarding
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/customers/onboarding
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/customers/onboarding/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Payments ───────────────────────────────────────────────
+
+          - name: payments
+            description: Payment processing service.
+            layer: backend
+            type: api
+            tags: [dotnet, payments, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/payments/payments
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/payments
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/payments/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: processes
+            description: Batch process management service.
+            layer: backend
+            type: api
+            tags: [dotnet, payments, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/payments/processes
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/processes
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/processes/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: transactions
+            description: Transaction logging and audit service.
+            layer: backend
+            type: api
+            tags: [dotnet, payments, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/payments/transactions
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/transactions
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/transactions/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: transfers
+            description: Fund transfer service.
+            layer: backend
+            type: api
+            tags: [dotnet, payments, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/payments/transfers
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/transfers
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/transfers/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: utility-payments
+            description: Utility bill payment service.
+            layer: backend
+            type: api
+            tags: [dotnet, payments, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/payments/utility-payments
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/utility-payments
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/payments/utility-payments/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Products ───────────────────────────────────────────────
+
+          - name: products
+            description: Product master data service.
+            layer: backend
+            type: api
+            tags: [dotnet, products, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/products/products
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/products
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/products/src/ui.api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: accounts
+            description: Bank accounts service.
+            layer: backend
+            type: api
+            tags: [dotnet, products, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/products/accounts
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/accounts
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/accounts/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: loans
+            description: Loan product service.
+            layer: backend
+            type: api
+            tags: [dotnet, products, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/products/loans
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/loans
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/loans/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: credit-cards
+            description: Credit card product service.
+            layer: backend
+            type: api
+            tags: [dotnet, products, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/products/credit_cards
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/credit_cards
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/credit_cards/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: investments
+            description: Investment product service.
+            layer: backend
+            type: api
+            tags: [dotnet, products, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/products/investments
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/investments
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/investments/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: thirdparty-accounts
+            description: Third-party account linking service.
+            layer: backend
+            type: api
+            tags: [dotnet, products, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/products/thirdparty_accounts
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/thirdparty_accounts
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/products/thirdparty_accounts/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Compliance ─────────────────────────────────────────────
+
+          - name: legal
+            description: Legal and regulatory document service.
+            layer: backend
+            type: api
+            tags: [dotnet, compliance, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/compliance/legal
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/compliance/legal
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/compliance/legal/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: reports
+            description: Compliance reporting service.
+            layer: backend
+            type: api
+            tags: [dotnet, compliance, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/compliance/reports
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/compliance/reports
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/compliance/reports/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Support ────────────────────────────────────────────────
+
+          - name: catalogs
+            description: Master catalogs service (currencies, codes, lookups).
+            layer: backend
+            type: api
+            tags: [dotnet, support, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/support/catalogs
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/support/catalogs
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/support/catalogs/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: files
+            description: File management and document upload service.
+            layer: backend
+            type: api
+            tags: [dotnet, support, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/support/files
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/support/files
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/support/files/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: notifications
+            description: Notification delivery service (email, SMS, push).
+            layer: backend
+            type: api
+            tags: [dotnet, support, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/support/notifications
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/support/notifications
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/support/notifications/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Integrations ───────────────────────────────────────────
+
+          - name: integration
+            description: Integration orchestration service.
+            layer: backend
+            type: service
+            tags: [dotnet, integrations, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/integrations/integration
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/integrations/integration
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/integrations/integration/src/api
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          - name: integration-bus
+            description: Integration event bus (bank adapters and connectors).
+            layer: backend
+            type: service
+            tags: [dotnet, integrations, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/integrations/integration-bus
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/integrations/integration-bus
+            scriptsfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/integrations/integration-bus
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+          # ── Backend Marketing ──────────────────────────────────────────────
+
+          - name: marketing
+            description: Marketing campaigns and content service.
+            layer: backend
+            type: service
+            tags: [dotnet, marketing, intec]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            repo-path: /services/marketing
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/services/marketing
+            commands:
+              run: dotnet run
+              test: dotnet test
+              build: dotnet build
+
+parameters:
+  - theme: gruvbox

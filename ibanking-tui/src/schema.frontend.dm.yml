@@ -1,0 +1,65 @@
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: crezcamos-frontend
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        environments:
+          - name: local-frontend
+            ide: code
+            urls:
+              - name: System Management
+                url: https://localhost:4200
+              - name: Enterprise Banking
+                url: http://localhost:4100
+              - name: Keycloak Admin
+                url: http://localhost:8080/admin
+            compose:
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.local
+              stacks:
+                - name: frontend-local
+                  description: Infraestructura y frontends locales desde fuente.
+                  files:
+                    - infra/compose-infra.yml
+                    - frontend/compose.local-frontends.yml
+                  tags: [frontend, infra, local]
+                - name: frontend-eb
+                  description: Solo frontends Enterprise Banking.
+                  files:
+                    - frontend/enterprise-banking/compose-frontends-enterprise-banking.yml
+                  tags: [frontend, eb, local]
+                - name: frontend-sm
+                  description: Solo frontends System Management.
+                  files:
+                    - frontend/system-management/compose-frontends-system-management.yml
+                  tags: [frontend, sm, local]
+        components:
+          - name: ibanking-frontend
+            description: Monorepo React/Nx para shells y remotes.
+            layer: frontend
+            type: ui
+            tags: [frontend, react, nx]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-frontend/src
+            commands:
+              extra:
+                - name: install
+                  description: Instala dependencias frontend.
+                  cmd: npm install
+                  tags: [frontend, npm, install]
+                - name: system-management-dev
+                  description: Ejecuta shell System Management local.
+                  cmd: npx nx serve shell-system-management --port=4200
+                  tags: [frontend, sm, dev]
+                - name: enterprise-banking-dev
+                  description: Ejecuta shell Enterprise Banking local.
+                  cmd: npx nx serve shell-enterprise-banking --port=4100
+                  tags: [frontend, eb, dev]
+                - name: build-frontends
+                  description: Compila todos los frontends.
+                  cmd: npx nx run-many -t build
+                  tags: [frontend, build]
+parameters:
+  - theme: gruvbox

@@ -1,0 +1,3 @@
+name: ibanking-tui
+ide: nvim # rider | code | nvim
+tags: [go, tui, intec]
