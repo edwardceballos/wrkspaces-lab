@@ -1,0 +1,38 @@
+
+  FLUJO DE NAVEGACIÓN
+
+  [splash]
+      │  DoneMsg
+      ▼
+  [catalog]  ──enter customer──▶  [catalog / proyectos]
+      │                               │
+      │                           enter project
+      │                               ▼
+      │                           [catalog / componentes]
+      │                               │
+      │                          ┌────┴───────────────┐
+      │                       enter                 enter
+      │                       (component)           (CICD)
+      │                          │                    │
+      │                          ▼                    ▼
+      │                       [docs]            [cmdpicker]
+      │                          │                    │
+      │                        esc                  enter / f
+      │                          │                    │
+      │             ┌────────────┘             ┌──────┴──────┐
+      │             │                       stream          TTY
+      │             ▼                          │              │
+      │         [catalog]                  [runview]    tea.ExecProcess
+      │                                        │
+      │                                       esc (job keeps running)
+      │                                        │
+      │    d (diagrams dir exists)             ▼
+      ├───────────────────────────▶       [catalog]
+      │                                        │
+      ▼                                        j
+  [diagrams]                                   ▼
+      │                                    [jobs]
+     esc                                       │
+      │                                   enter / k
+      ▼                                        │
+  [catalog]                             attach / kill

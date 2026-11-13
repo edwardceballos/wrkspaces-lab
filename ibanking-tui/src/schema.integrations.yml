@@ -1,0 +1,141 @@
+# Schema operativo para despliegue manual de czc/pre desde el TUI.
+# El TUI corre localmente y ejecuta operaciones contra la VM por gcloud IAP.
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: crezcamos-pre-manual-deploy
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        cicd:
+          folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+          repo: "https://github.com/inteclatam/ibanking-cicd"
+          pipelines:
+            - name: preflight-local
+              description: Valida cuenta gcloud activa y acceso IAP a ibanking-vm-pre.
+              cmd: >-
+                bash -lc 'set -Eeuo pipefail;
+                echo "Cuenta gcloud activa:";
+                gcloud auth list --filter="status=ACTIVE" --format="value(account)";
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command="echo SSH_OK"'
+              tags: [czc, pre, gcp, iap, preflight]
+            - name: deploy-dry-run
+              description: Muestra el deploy completo que se ejecutaria sin tocar la VM.
+              cmd: bash gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer all --dry-run
+              tags: [czc, pre, deploy, dry-run]
+            - name: publish-release-images
+              description: Construye desde codigo, pushea latest, pide version semantica y publica tag adicional.
+              cmd: DOCKERHUB_REPO=inteclatamcr FRONTEND_ENV=crezcamos-pre bash docker/_scripts/publish-release-images.sh
+              tags: [czc, pre, build, images, dockerhub, release]
+            - name: deploy-all
+              description: Despliega infra, backend y frontend de czc/pre en la VM por IAP.
+              cmd: bash gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer all --force
+              tags: [czc, pre, deploy, all]
+            - name: deploy-infra
+              description: Despliega solo infraestructura de czc/pre en la VM por IAP.
+              cmd: bash gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer infra --force
+              tags: [czc, pre, deploy, infra]
+            - name: deploy-backend
+              description: Despliega solo backend de czc/pre en la VM por IAP.
+              cmd: bash gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer backend --force
+              tags: [czc, pre, deploy, backend]
+            - name: deploy-frontend
+              description: Despliega solo frontends de czc/pre en la VM por IAP.
+              cmd: bash gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer frontend --force
+              tags: [czc, pre, deploy, frontend]
+            - name: ssh-vm
+              description: Abre una sesion SSH IAP hacia ibanking-vm-pre.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+              tags: [czc, pre, gcp, iap, ssh]
+            - name: vm-compose-config
+              description: Renderiza compose.external-db.yml en la VM sin levantar servicios.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking/docker &&
+                docker compose --env-file .env.crezcamos-pre
+                -f compose.external-db.yml
+                config >/tmp/ibanking-external-db-pre.config &&
+                echo /tmp/ibanking-external-db-pre.config'
+              tags: [czc, pre, compose, config, vm]
+            - name: vm-docker-ps
+              description: Lista contenedores activos en la VM.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"'
+              tags: [czc, pre, docker, vm]
+            - name: vm-health
+              description: Valida respuestas HTTP de EB, SM y BFF por los dominios publicos.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='set -Ee;
+                curl -I https://ibanking.probamos.co/;
+                curl -I https://ibanking-admin.probamos.co/;
+                curl -I https://ibanking-api.probamos.co/bff/csrf'
+              tags: [czc, pre, health, domains]
+            - name: vm-logs-proxy
+              description: Muestra logs recientes de Caddy y Traefik API gateway.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='docker logs caddy --tail 120;
+                docker logs ibanking-api --tail 120'
+              tags: [czc, pre, logs, proxy]
+        environments:
+          - name: gcp-crezcamos-pre
+            urls:
+              - name: Enterprise Banking
+                url: https://ibanking.probamos.co
+              - name: System Management
+                url: https://ibanking-admin.probamos.co
+              - name: API Gateway
+                url: https://ibanking-api.probamos.co
+              - name: BFF CSRF
+                url: https://ibanking-api.probamos.co/bff/csrf
+          - name: local-compose-reference
+            compose:
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.crezcamos-pre
+              stacks:
+                - name: external-db
+                  description: Referencia local del compose czc/pre con Cloud SQL externo.
+                  files: [compose.external-db.yml]
+                  tags: [czc, pre, external-db]
+        components:
+          - name: ibanking-cicd-czc-pre
+            description: Operacion manual czc/pre por IAP y Docker Compose en VM.
+            layer: infra
+            type: service
+            tags: [czc, pre, gcp, docker, deploy]
+            repo: "https://github.com/inteclatam/ibanking-cicd"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            commands:
+              extra:
+                - name: docs-manual-deploy
+                  description: Muestra la guia operativa del deploy manual en VM pre.
+                  cmd: sed -n '1,220p' docs/deploy-manual-vm-pre.md
+                  tags: [docs, czc, pre]
+                - name: show-czc-tenant-config
+                  description: Muestra la configuracion no secreta del tenant czc.
+                  cmd: sed -n '1,140p' gcp/pipeline/tenants/czc.env
+                  tags: [czc, pre, config]
+parameters:
+  - theme: gruvbox

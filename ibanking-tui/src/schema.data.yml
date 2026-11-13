@@ -1,0 +1,135 @@
+# Data operations profile.
+#
+# Database and migration commands are intentionally outside schema.yml because
+# they are less frequent and carry more operational risk than daily navigation.
+
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: ibanking-data
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        environments:
+          - name: local-data
+            compose:
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.local
+              stacks:
+                - name: infra-only
+                  description: Infraestructura local con PostgreSQL y servicios compartidos.
+                  files: [infra/compose-infra.yml]
+                  tags: [data, local, infra, postgres]
+                - name: backend
+                  description: Backend local para validar migraciones contra APIs.
+                  files: [backend/compose.local-backend.yml]
+                  tags: [data, local, backend]
+                - name: akamai-external-db-hub
+                  description: Backend DockerHub con PostgreSQL externo Akamai por tunel local.
+                  files:
+                    - compose.akamai-external-db-hub.yml
+                    - compose.akamai-local-tunnel.yml
+                  tags: [data, akamai, external-db, dockerhub, tunnel]
+        components:
+          - name: ibanking-cicd-data
+            description: Migraciones, checks y diagnostico de bases.
+            layer: infra
+            type: service
+            tags: [data, db, migration]
+            repo: "https://github.com/inteclatam/ibanking-cicd"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            commands:
+              extra:
+                - name: db-list-ef-services
+                  description: Lista servicios EF migrables detectados.
+                  cmd: ./scripts/db/list-ef-services.sh
+                  tags: [data, db, list]
+                - name: db-migration-static-check
+                  description: >-
+                    Verifica migraciones huerfanas (.cs sin .Designer.cs) y
+                    drift de modelo en los 21 servicios, sin tocar ninguna
+                    base. Requiere build previo de los proyectos EF.
+                  cmd: ./scripts/db/migration-static-check.sh
+                  tags: [data, db, migration, status, check]
+                - name: db-migrate-local-dry-run
+                  description: >-
+                    Muestra estado (estatico + pendientes reales) de un
+                    servicio local sin aplicar nada. Editar el comando para
+                    apuntar al migration.env del servicio deseado.
+                  cmd: >-
+                    ./scripts/db/migrate-local-with-backup.sh --dry-run
+                    ../ibanking-backend/services/iam/mfa/scripts/db/migration.env
+                  tags: [data, db, local, migration, dry-run]
+                - name: db-migrate-local-apply
+                  description: >-
+                    Verifica, hace backup y aplica migraciones EF para un
+                    servicio local (pide confirmacion). Editar el comando
+                    para apuntar al migration.env del servicio deseado.
+                  cmd: >-
+                    ./scripts/db/migrate-local-with-backup.sh
+                    ../ibanking-backend/services/iam/mfa/scripts/db/migration.env
+                  tags: [data, db, local, migration, apply]
+                - name: db-prereq-check
+                  description: Verifica herramientas requeridas para migraciones.
+                  cmd: >-
+                    command -v dotnet &&
+                    dotnet ef --version &&
+                    command -v psql &&
+                    command -v pg_dump
+                  tags: [data, db, prereq, check]
+                - name: db-local-init-dry-run
+                  description: Muestra inicializacion de bases locales sin ejecutarla.
+                  cmd: ./scripts/db/init-databases.sh --env-file docker/.env.local --dry-run
+                  tags: [data, db, local, init, dry-run]
+                - name: db-local-init
+                  description: Inicializa bases Docker locales usando .env.local.
+                  cmd: ./scripts/db/init-databases.sh --env-file docker/.env.local
+                  tags: [data, db, local, init]
+                - name: db-local-check
+                  description: Verifica bases Docker locales en contenedores activos.
+                  cmd: ./scripts/db/check-databases.sh --running-only
+                  tags: [data, db, local, check]
+                - name: db-dev-compose-check
+                  description: Valida render de Compose dev con .env.dev.
+                  cmd: docker compose --env-file docker/.env.dev -f docker/compose.yml config >/tmp/ibanking-dev.config
+                  tags: [data, db, dev, compose, check]
+                - name: db-akamai-permissions-check
+                  description: Valida permisos de migracion contra PostgreSQL externo Akamai.
+                  cmd: >-
+                    ./scripts/db/check-cloudsql-migration-permissions.sh
+                    --env-file docker/.env.akamai
+                    --project ibanking-pre
+                    --tenant czc
+                    --prefer-gsm
+                  tags: [data, db, akamai, external-db, check]
+                - name: db-akamai-migrate-dry-run
+                  description: Genera SQL y valida apply/backup en Akamai sin aplicar.
+                  cmd: ./scripts/db/migrate-akamai-external-db.sh --env-file docker/.env.akamai
+                  tags: [data, db, akamai, external-db, dry-run]
+                - name: db-akamai-migrate-apply
+                  description: Aplica migraciones EF contra PostgreSQL externo Akamai.
+                  cmd: ./scripts/db/migrate-akamai-external-db.sh --env-file docker/.env.akamai --apply
+                  tags: [data, db, akamai, external-db, apply]
+                - name: db-akamai-row-audit-dry-run
+                  description: Dry-run de AddRowAuditLog (audit.row_audit_logs) en Akamai por tunel localhost:5433.
+                  cmd: ./scripts/db/row-audit/apply-row-audit.sh --env-file docker/.env.akamai
+                  tags: [data, db, akamai, row-audit, dry-run]
+                - name: db-akamai-row-audit-apply
+                  description: Aplica AddRowAuditLog en Akamai (idempotente). Hacerlo antes de desplegar imagenes con el interceptor.
+                  cmd: ./scripts/db/row-audit/apply-row-audit.sh --env-file docker/.env.akamai --apply
+                  tags: [data, db, akamai, row-audit, apply]
+                - name: akamai-vm-pagos-masivos-dry-run
+                  description: Muestra el diff del override de la VM Akamai para pagos masivos (MinIO + router del callback); no cambia nada.
+                  cmd: ./scripts/akamai-vm-pagos-masivos.sh
+                  tags: [data, akamai, pagos-masivos, dry-run]
+                - name: k8s-render-from-compose
+                  description: Regenera k8s/base y overlays desde los compose (se commitea y se revisa).
+                  cmd: python3 k8s/scripts/render-from-compose.py
+                  tags: [k8s, render]
+                - name: k8s-verify
+                  description: Chequeos estaticos de la salida de k8s/.
+                  cmd: python3 k8s/scripts/verify.py
+                  tags: [k8s, verify]
+
+parameters:
+  - theme: gruvbox

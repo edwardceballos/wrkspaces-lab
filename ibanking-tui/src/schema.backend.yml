@@ -1,0 +1,69 @@
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: crezcamos-backend
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        cicd:
+          folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+          repo: "https://github.com/inteclatam/ibanking-cicd"
+          pipelines:
+            - name: czc-stack-build-local
+              description: Construye imagenes DockerHub CZC para local dev.
+              cmd: DOCKERHUB_REPO=inteclatamcr IMAGE_TAG=local bash ./docker/_scripts/publish-local-images.sh build czc-stack local
+              tags: [build, images, dockerhub, czc, backend]
+            - name: czc-stack-publish-local
+              description: Construye y publica imagenes DockerHub CZC para local dev.
+              cmd: DOCKERHUB_REPO=inteclatamcr IMAGE_TAG=local bash ./docker/_scripts/publish-local-images.sh publish czc-stack local
+              tags: [build, push, images, dockerhub, czc, backend]
+        environments:
+          - name: local-backend
+            ide: rider
+            urls:
+              - name: Keycloak Admin
+                url: http://localhost:8080/admin
+              - name: RabbitMQ
+                url: http://localhost:15672
+              - name: Uptime Kuma
+                url: http://localhost:3001
+            compose:
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.local
+              stacks:
+                - name: backend-hub
+                  description: Infra, Postgres y APIs backend desde imagenes DockerHub.
+                  files:
+                    - backend/compose-backend.yml
+                  tags: [backend, dockerhub, infra, postgres, local]
+                - name: czc-real-onboarding-hub
+                  description: Onboarding CZC real desde imagenes DockerHub con monitoreo.
+                  files:
+                    - backend/compose.local-integrations-czc-dockerhub-stack.yml
+                    - backend/integrations/compose.czc-onboarding-e2e-mock-dockerhub.yml
+                    - backend/integrations/compose.czc-onboarding-platform-apis-dockerhub.yml
+                    - backend/integrations/compose.czc-onboarding-e2e-real-dockerhub.yml
+                    - infra/monitoring/compose-uptime-kuma.yml
+                  tags: [backend, dockerhub, czc, real, onboarding]
+        components:
+          - name: ibanking-cicd-backend
+            description: Operacion backend local con imagenes DockerHub.
+            layer: backend
+            type: service
+            tags: [backend, dockerhub, cicd]
+            repo: "https://github.com/inteclatam/ibanking-cicd"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            commands:
+              extra:
+                - name: stacks-list
+                  description: Lista stacks disponibles en stack-admin.
+                  cmd: ./stack-admin.sh list
+                  dir: docker
+                  tags: [backend, stack, list]
+                - name: czc-real-smoke
+                  description: Ejecuta smoke real CZC contra integration-api/Bento/Apigee.
+                  cmd: ./stack-admin.sh czc-real smoke
+                  dir: docker
+                  tags: [backend, czc, smoke, real]
+parameters:
+  - theme: gruvbox

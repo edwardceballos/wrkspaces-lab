@@ -1,0 +1,125 @@
+# TUI daily catalog for Windows/WSL.
+#
+# Keep this default profile small and task-oriented. The full legacy catalog
+# remains available in schema.dm.yml.
+
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: ibanking-daily
+        folder: /mnt/e/Inteclatam/Repositories/intec-banking
+        cicd:
+          folder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-cicd
+          repo: "https://github.com/inteclatam/ibanking-cicd"
+          actions:
+            repo: inteclatam/ibanking-cicd
+          pipelines:
+            - name: stacks-list
+              description: Lista los stacks operativos disponibles.
+              cmd: ./stack-admin.sh list
+              dir: docker
+              tags: [daily, stack, list]
+        environments:
+          - name: local-daily
+            ide: rider
+            urls:
+              - name: Enterprise Banking
+                url: http://localhost:4100
+              - name: System Management
+                url: https://localhost:4200
+              - name: API Gateway
+                url: http://api.localtest.me
+              - name: Keycloak Admin
+                url: http://localhost:8080/admin
+              - name: RabbitMQ
+                url: http://localhost:15672
+              - name: Mailpit
+                url: http://localhost:8025
+            compose:
+              dir: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-cicd/docker
+              env-file: .env.local
+              stacks:
+                - name: full-local
+                  description: Plataforma local completa.
+                  files: [compose.local.yml]
+                  tags: [daily, local, full]
+                - name: backend
+                  description: Backend local desde fuente.
+                  files: [backend/compose.local-backend.yml]
+                  tags: [daily, local, backend]
+                - name: frontend
+                  description: Frontends locales desde fuente.
+                  files:
+                    - infra/compose-networks.yml
+                    - frontend/compose.local-frontends.yml
+                  tags: [daily, local, frontend]
+                - name: infra-only
+                  description: Infraestructura local compartida.
+                  files: [infra/compose-infra.yml]
+                  tags: [daily, local, infra]
+                - name: infra-only-ports
+                  description: Infraestructura local con puertos expuestos.
+                  files: [infra/compose-infra.yml, compose.local.override.yml]
+                  tags: [daily, local, infra, ports]
+        components:
+          - name: ibanking-frontend
+            description: Nx monorepo de frontends React.
+            layer: frontend
+            type: ui
+            tags: [daily, frontend, react, nx]
+            repo: "https://github.com/inteclatam/ibanking-frontend"
+            folder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-frontend/src
+            srcfolder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-frontend/src
+            commands:
+              test: npx nx run-many -t test
+              build: npx nx run-many -t build
+              extra:
+                - name: install
+                  description: Instala dependencias frontend.
+                  cmd: npm install
+                  tags: [daily, frontend, install]
+                - name: system-management-dev
+                  description: Ejecuta shell System Management local.
+                  cmd: npx nx serve shell-system-management --port=4200
+                  tags: [daily, frontend, sm, dev]
+                - name: enterprise-banking-dev
+                  description: Ejecuta shell Enterprise Banking local.
+                  cmd: npx nx serve shell-enterprise-banking --port=4100
+                  tags: [daily, frontend, eb, dev]
+
+          - name: ibanking-backend
+            description: Solucion .NET de microservicios backend.
+            layer: backend
+            type: api
+            tags: [daily, backend, dotnet]
+            repo: "https://github.com/inteclatam/ibanking-backend"
+            folder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-backend
+            srcfolder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-backend
+            commands:
+              test: dotnet test
+              build: dotnet build
+
+          - name: ibanking-cicd
+            description: Operacion local de stacks y scripts compartidos.
+            layer: infra
+            type: service
+            tags: [daily, infra, cicd]
+            repo: "https://github.com/inteclatam/ibanking-cicd"
+            folder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-cicd
+            srcfolder: /mnt/e/Inteclatam/Repositories/intec-banking/ibanking-cicd
+            commands:
+              extra:
+                - name: local-menu
+                  description: Abre el menu local interactivo.
+                  cmd: ./local-menu.sh
+                  dir: docker
+                  tags: [daily, local, menu]
+                - name: crezcamos-menu
+                  description: Abre el menu operativo de Crezcamos.
+                  cmd: ./crezcamos-menu.sh
+                  dir: docker
+                  tags: [daily, czc, menu]
+
+parameters:
+  - theme: gruvbox

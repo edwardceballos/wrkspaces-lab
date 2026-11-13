@@ -1,0 +1,474 @@
+# Flujo completo de despliegue czc/pre desde el TUI.
+# El TUI corre localmente; las operaciones de VM se ejecutan por gcloud IAP.
+customers:
+  - name: IntecLatam
+    website: inteclatam.com
+    projects:
+      - name: crezcamos-pre-deploy-flow
+        folder: /home/sisu/Projects/IntecLatam/intec-banking
+        cicd:
+          folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+          repo: "https://github.com/inteclatam/ibanking-cicd"
+          pipelines:
+            - name: 01-preflight-local
+              description: Valida cuenta gcloud activa, acceso IAP a la VM y dry-run del deploy.
+              cmd: >-
+                bash -lc 'set -Eeuo pipefail;
+                echo "Cuenta gcloud activa:";
+                gcloud auth list --filter="status=ACTIVE" --format="value(account)";
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command="echo SSH_OK";
+                bash gcp/pipeline/scripts/deploy-vm.sh
+                --tenant czc
+                --env pre
+                --layer all
+                --dry-run'
+              tags: [czc, pre, flow, gcp, iap, preflight]
+            - name: 02-list-release-images
+              description: Lista las imagenes que se publicaran para frontend, backend y stack CZC.
+              cmd: >-
+                bash -lc 'set -Eeuo pipefail;
+                DOCKERHUB_REPO=inteclatamcr FRONTEND_ENV=crezcamos-pre
+                docker/_scripts/publish-local-images.sh list frontend latest;
+                DOCKERHUB_REPO=inteclatamcr FRONTEND_ENV=crezcamos-pre
+                docker/_scripts/publish-local-images.sh list backend latest;
+                DOCKERHUB_REPO=inteclatamcr FRONTEND_ENV=crezcamos-pre
+                docker/_scripts/publish-local-images.sh list czc-stack latest'
+              tags: [czc, pre, flow, images, dockerhub, list]
+            - name: 03-publish-release-images
+              description: Construye desde codigo, publica latest en Docker Hub y agrega tag semantico.
+              cmd: DOCKERHUB_REPO=inteclatamcr FRONTEND_ENV=crezcamos-pre bash docker/_scripts/publish-release-images.sh
+              tags: [czc, pre, flow, build, push, images, dockerhub, release]
+            - name: 03b-publish-one-release-image
+              description: Publica una sola imagen de Crezcamos PRE; ejecutar con full-TTY para elegir grupo, imagen y version.
+              cmd: DOCKERHUB_REPO=inteclatamcr FRONTEND_ENV=crezcamos-pre bash docker/_scripts/publish-release-images.sh --single
+              tags:
+                [
+                  czc,
+                  pre,
+                  flow,
+                  build,
+                  push,
+                  images,
+                  dockerhub,
+                  release,
+                  single,
+                ]
+            - name: 04-mirror-frontend-artifact-registry
+              description: Espeja imagenes frontend desde Docker Hub hacia Artifact Registry de ibanking-pre.
+              cmd: >-
+                gcloud builds submit .
+                --config=gcp/pipeline/cloudbuild.mirror-only.yaml
+                --substitutions=_TENANT=czc,_LAYER=frontend
+                --project=ibanking-pre
+                --service-account=projects/ibanking-pre/serviceAccounts/ibankingpre-sa@ibanking-pre.iam.gserviceaccount.com
+              tags:
+                [czc, pre, flow, images, artifact-registry, mirror, frontend]
+            - name: 05-mirror-backend-artifact-registry
+              description: Espeja imagenes backend y Bentos CZC hacia Artifact Registry de ibanking-pre.
+              cmd: >-
+                gcloud builds submit .
+                --config=gcp/pipeline/cloudbuild.mirror-only.yaml
+                --substitutions=_TENANT=czc,_LAYER=backend
+                --project=ibanking-pre
+                --service-account=projects/ibanking-pre/serviceAccounts/ibankingpre-sa@ibanking-pre.iam.gserviceaccount.com
+              tags: [czc, pre, flow, images, artifact-registry, mirror, backend]
+            - name: 06-vm-preflight
+              description: Valida repo, Docker, gcloud y render de compose external-db en la VM.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='set -Eeuo pipefail;
+                cd /opt/ibanking;
+                git status --short;
+                docker --version;
+                docker compose version || docker-compose --version;
+                gcloud auth list --filter="status=ACTIVE" --format="value(account)";
+                cd /opt/ibanking/docker;
+                docker compose --env-file .env.crezcamos-pre
+                -f compose.external-db.yml
+                config >/tmp/ibanking-external-db-pre.config;
+                grep -nE "ibanking-api.probamos.co|ibanking-czc-int-bento|auth.probamos.co|8080:8080"
+                /tmp/ibanking-external-db-pre.config || true'
+              tags: [czc, pre, flow, vm, compose, config, preflight]
+            - name: 07-vm-sync-runtime-secrets
+              description: Materializa secretos runtime desde GSM en docker/secrets y en el env external-db sin imprimir valores.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking &&
+                bash gcp/pipeline/scripts/sync-secrets.sh
+                ibanking-pre
+                czc &&
+                bash gcp/pipeline/scripts/sync-env-secrets.sh
+                ibanking-pre
+                czc
+                /opt/ibanking/docker/.env.crezcamos-pre'
+              tags: [czc, pre, flow, vm, gsm, secrets]
+            - name: 08-vm-cloudsql-permissions
+              description: Valida permisos practicos de migracion contra Cloud SQL usando GSM como fuente preferida.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking &&
+                scripts/db/check-cloudsql-migration-permissions.sh
+                --env-file /opt/ibanking/docker/.env.crezcamos-pre
+                --project ibanking-pre
+                --tenant czc
+                --prefer-gsm'
+              tags: [czc, pre, flow, vm, cloudsql, migrations, permissions]
+            - name: 08b-vm-migration-status
+              description: >-
+                Muestra migraciones aplicadas/pendientes reales por servicio
+                contra Cloud SQL, corriendo la propia imagen de API de cada
+                servicio (modo "migrations-status") en contenedor desde la
+                VM (nunca conexion directa desde el laptop). Solo funciona
+                para servicios ya redesplegados con este modo incluido en su
+                Program.cs; hasta entonces esos servicios se saltan solos
+                (arranca Kestrel normal y el paso lo mata por timeout).
+                Cubre los 19 servicios con connection string mapeable en
+                .env.crezcamos-pre; intec-id identity/management quedan
+                excluidos por decision (su DbContext esta en otro assembly
+                y no se cablearon). No reemplaza el chequeo estatico local
+                (db-migration-static-check).
+              cmd: >-
+                for svc in
+                iam-mfa:services/iam/mfa
+                iam-users:services/iam/users
+                iam-profiles:services/iam/profiles
+                iam-tenants:services/iam/tenants
+                compliance-legal:services/compliance/legal
+                support-files:services/support/files
+                support-catalogs:services/support/catalogs
+                support-notifications:services/support/notifications
+                customers-customers:services/customers/customers
+                customers-onboardings:services/customers/onboarding
+                payments-processes:services/payments/processes
+                payments-pse:services/payments/pse
+                integrations-integration:services/integrations/integration
+                products-accounts:services/products/accounts
+                products-loans:services/products/loans
+                products-investments:services/products/investments
+                products-thirdparty-accounts:services/products/thirdparty_accounts
+                products-credit-cards:services/products/credit_cards
+                products-products:services/products/products
+                ; do
+                id="${svc%%:*}";
+                path="${svc#*:}";
+                gcloud compute scp
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                "/home/sisu/Projects/IntecLatam/intec-banking/ibanking-backend/${path}/scripts/db/migration.env"
+                "ibanking-vm-pre:/opt/ibanking/artifacts/migration-envs/${id}.env" || continue;
+                done &&
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking &&
+                set -a &&
+                source /opt/ibanking/docker/.env.crezcamos-pre &&
+                set +a &&
+                declare -A dbvar=(
+                [iam-mfa]="MFA_DB:MFA_DB_USER:MFA_DB_PASSWORD:DATABASE__MFACONNECTIONSTRING"
+                [iam-users]="USERS_DB:USERS_DB_USER:USERS_DB_PASSWORD:DATABASE__USERSCONNECTIONSTRING"
+                [iam-profiles]="PROFILES_DB:PROFILES_DB_USER:PROFILES_DB_PASSWORD:DATABASE__PROFILESCONNECTIONSTRING"
+                [iam-tenants]="TENANTS_DB:TENANTS_DB_USER:TENANTS_DB_PASSWORD:DATABASE__TENANTSCONNECTIONSTRING"
+                [compliance-legal]="LEGALS_DB:LEGALS_DB_USER:LEGALS_DB_PASSWORD:DATABASE__LEGALCONNECTIONSTRING"
+                [support-files]="FILES_DB:FILES_DB_USER:FILES_DB_PASSWORD:DATABASE__FILESCONNECTIONSTRING"
+                [support-catalogs]="CATALOGS_DB:CATALOGS_DB_USER:CATALOGS_DB_PASSWORD:DATABASE__CATALOGSCONNECTIONSTRING"
+                [support-notifications]="NOTIFICATIONS_DB:NOTIFICATIONS_DB_USER:NOTIFICATIONS_DB_PASSWORD:DATABASE__NOTIFICATIONSCONNECTIONSTRING"
+                [customers-customers]="CUSTOMERS_DB:CUSTOMERS_DB_USER:CUSTOMERS_DB_PASSWORD:DATABASE__CUSTOMERSCONNECTIONSTRING"
+                [customers-onboardings]="ONBOARDINGS_DB:ONBOARDINGS_DB_USER:ONBOARDINGS_DB_PASSWORD:DATABASE__ONBOARDINGCONNECTIONSTRING"
+                [payments-processes]="PROCESSES_DB:PROCESSES_DB_USER:PROCESSES_DB_PASSWORD:DATABASE__PROCESSESCONNECTIONSTRING"
+                [payments-pse]="PSE_DB:PSE_DB_USER:PSE_DB_PASSWORD:DATABASE__PSECONNECTIONSTRING"
+                [integrations-integration]="INTEGRATIONS_DB:INTEGRATIONS_DB_USER:INTEGRATIONS_DB_PASSWORD:DATABASE__INTEGRATIONCONNECTIONSTRING"
+                [products-accounts]="ACCOUNTS_DB:ACCOUNTS_DB_USER:ACCOUNTS_DB_PASSWORD:DATABASE__ACCOUNTSCONNECTIONSTRING"
+                [products-loans]="LOANS_DB:LOANS_DB_USER:LOANS_DB_PASSWORD:DATABASE__LOANSCONNECTIONSTRING"
+                [products-investments]="INVESTMENTS_DB:INVESTMENTS_DB_USER:INVESTMENTS_DB_PASSWORD:DATABASE__INVESTMENTSCONNECTIONSTRING"
+                [products-thirdparty-accounts]="THIRDPARTY_ACCOUNTS_DB:THIRDPARTY_ACCOUNTS_DB_USER:THIRDPARTY_ACCOUNTS_DB_PASSWORD:DATABASE__THIRDPARTYACCOUNTSCONNECTIONSTRING"
+                [products-credit-cards]="CREDIT_CARDS_DB:CREDIT_CARDS_DB_USER:CREDIT_CARDS_DB_PASSWORD:DATABASE__CREDITCARDSCONNECTIONSTRING"
+                [products-products]="PRODUCTS_DB:PRODUCTS_DB_USER:PRODUCTS_DB_PASSWORD:DATABASE__PRODUCTSCONNECTIONSTRING"
+                ) &&
+                for f in /opt/ibanking/artifacts/migration-envs/*.env; do
+                id="$(basename "$f" .env)";
+                echo "== $id ==";
+                sed -i -E "s#MIGRATOR_IMAGE=inteclatamcr/(ibanking-[a-z-]+)#MIGRATOR_IMAGE=us-east1-docker.pkg.dev/ibanking-pre/ibanking-docker-hub-mirror/\1#" "$f";
+                IFS=":" read -r dbn dbu dbp connvar <<< "${dbvar[$id]:-}";
+                if [[ -z "$connvar" ]]; then echo "  (sin mapeo de conexion para $id, saltando)"; continue; fi;
+                export "$connvar=Host=${CLOUDSQL_HOST};Port=${CLOUDSQL_PORT:-5432};Database=${!dbn};Username=${!dbu};Password=${!dbp}";
+                timeout 30 scripts/db/run-migrator.sh "$f" migrations-status || echo "  (sin respuesta a migrations-status - imagen desplegada aun no incluye este modo, o timeout)";
+                unset "$connvar";
+                done'
+              tags: [czc, pre, flow, vm, cloudsql, migrations, status]
+            - name: 08c-vm-row-audit-dry-run
+              description: >-
+                Dry-run de la migracion AddRowAuditLog (audit.row_audit_logs)
+                en las BDs de servicio; informa "ya aplicada" / PENDIENTE.
+                Aplicar ANTES de desplegar imagenes con RowAuditInterceptor.
+                Ver scripts/db/row-audit/README.md.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking &&
+                bash scripts/db/row-audit/apply-row-audit.sh
+                --env-file /opt/ibanking/docker/.env.crezcamos-pre'
+              tags: [czc, pre, flow, vm, cloudsql, migrations, row-audit, dry-run]
+            - name: 08d-vm-row-audit-apply
+              description: Aplica AddRowAuditLog en las BDs de servicio de pre y verifica (idempotente).
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking &&
+                bash scripts/db/row-audit/apply-row-audit.sh
+                --env-file /opt/ibanking/docker/.env.crezcamos-pre
+                --apply'
+              tags: [czc, pre, flow, vm, cloudsql, migrations, row-audit, apply]
+            - name: 08e-vm-release-reset-dry-run
+              description: >-
+                Dry-run del release-reset (limpieza + esquema EF + seed czc).
+                Solo muestra el plan; el --apply es destructivo y requiere
+                --confirm-word, por eso se ejecuta a mano (ver
+                scripts/db/release-reset/README.md).
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='cd /opt/ibanking &&
+                bash scripts/db/release-reset/reset-and-seed.sh
+                --env-file /opt/ibanking/docker/.env.crezcamos-pre'
+              tags: [czc, pre, flow, vm, cloudsql, release-reset, dry-run]
+            - name: 09-local-cloudsql-migrations-dry-run
+              description: Genera SQL idempotente localmente y valida aplicacion en la VM sin escribir en Cloud SQL.
+              cmd: >-
+                scripts/db/migrate-akamai-external-db.sh
+                --env-file /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker/.env.crezcamos-pre
+                --generate-only &&
+                gcloud compute scp
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                scripts/db/apply-existing-migration-sql.sh
+                ibanking-vm-pre:/opt/ibanking/scripts/db/apply-existing-migration-sql.sh &&
+                gcloud compute scp
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                gcp/pipeline/scripts/sync-env-secrets.sh
+                ibanking-vm-pre:/opt/ibanking/gcp/pipeline/scripts/sync-env-secrets.sh &&
+                gcloud compute scp
+                --recurse
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                /home/sisu/Projects/IntecLatam/intec-banking/artifacts/migrations
+                ibanking-vm-pre:/opt/ibanking/artifacts/ &&
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='chmod +x
+                /opt/ibanking/scripts/db/apply-existing-migration-sql.sh
+                /opt/ibanking/gcp/pipeline/scripts/sync-env-secrets.sh &&
+                cd /opt/ibanking &&
+                gcp/pipeline/scripts/sync-env-secrets.sh
+                ibanking-pre
+                czc
+                /opt/ibanking/docker/.env.crezcamos-pre &&
+                scripts/db/apply-existing-migration-sql.sh
+                --env-file /opt/ibanking/docker/.env.crezcamos-pre'
+              tags: [czc, pre, flow, local, cloudsql, migrations, dry-run]
+            - name: 10-local-cloudsql-migrations-apply
+              description: Genera SQL idempotente localmente y aplica migraciones en Cloud SQL desde la VM con backup previo.
+              cmd: >-
+                scripts/db/migrate-akamai-external-db.sh
+                --env-file /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker/.env.crezcamos-pre
+                --generate-only &&
+                gcloud compute scp
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                scripts/db/apply-existing-migration-sql.sh
+                ibanking-vm-pre:/opt/ibanking/scripts/db/apply-existing-migration-sql.sh &&
+                gcloud compute scp
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                gcp/pipeline/scripts/sync-env-secrets.sh
+                ibanking-vm-pre:/opt/ibanking/gcp/pipeline/scripts/sync-env-secrets.sh &&
+                gcloud compute scp
+                --recurse
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                /home/sisu/Projects/IntecLatam/intec-banking/artifacts/migrations
+                ibanking-vm-pre:/opt/ibanking/artifacts/ &&
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='chmod +x
+                /opt/ibanking/scripts/db/apply-existing-migration-sql.sh
+                /opt/ibanking/gcp/pipeline/scripts/sync-env-secrets.sh &&
+                cd /opt/ibanking &&
+                gcp/pipeline/scripts/sync-env-secrets.sh
+                ibanking-pre
+                czc
+                /opt/ibanking/docker/.env.crezcamos-pre &&
+                scripts/db/apply-existing-migration-sql.sh
+                --env-file /opt/ibanking/docker/.env.crezcamos-pre
+                --apply
+                '
+              tags: [czc, pre, flow, local, cloudsql, migrations, apply]
+            - name: 11-deploy-all
+              description: Despliega infra, backend y frontend de czc/pre en la VM por IAP.
+              cmd: bash gcp/pipeline/scripts/deploy-vm.sh --tenant czc --env pre --layer all --force
+              tags: [czc, pre, flow, deploy, all]
+            - name: 11b-deploy-one-release-image
+              description: Despliega una sola imagen de Crezcamos PRE; ejecutar con full-TTY para elegir grupo, imagen y version.
+              cmd: bash gcp/pipeline/scripts/deploy-release-image.sh --single
+              tags: [czc, pre, flow, deploy, image, single]
+            - name: 12-vm-post-deploy-health
+              description: Verifica contenedores, logs principales y HTTP health de EB, SM y BFF.
+              cmd: >-
+                gcloud compute ssh ibanking-vm-pre
+                --zone us-east1-c
+                --project ibanking-pre
+                --tunnel-through-iap
+                --command='set -Ee;
+                docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}";
+                for c in caddy ibanking-api; do
+                  if docker inspect "$c" >/dev/null 2>&1; then
+                    echo "== logs: $c ==";
+                    docker logs "$c" --tail 120;
+                  else
+                    echo "WARN: contenedor opcional no existe: $c";
+                  fi;
+                done;
+                echo "== api containers ==";
+                docker ps --format "{{.Names}}" | grep -E "(api|caddy)" || true;
+                curl -fsSI https://ibanking.probamos.co/;
+                curl -fsSI https://ibanking-admin.probamos.co/;
+                curl -fsSI https://ibanking-api.probamos.co/bff/csrf'
+              tags: [czc, pre, flow, vm, health, verification]
+        environments:
+          - name: gcp-crezcamos-pre
+            urls:
+              - name: Enterprise Banking
+                url: https://ibanking.probamos.co
+              - name: System Management
+                url: https://ibanking-admin.probamos.co
+              - name: API Gateway
+                url: https://ibanking-api.probamos.co
+              - name: BFF CSRF
+                url: https://ibanking-api.probamos.co/bff/csrf
+          - name: vm-compose-reference
+            compose:
+              dir: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd/docker
+              env-file: .env.crezcamos-pre
+              stacks:
+                - name: external-db
+                  description: Referencia del compose czc/pre con bases externas en Cloud SQL.
+                  files: [compose.external-db.yml]
+                  tags: [czc, pre, external-db, cloudsql]
+        components:
+          - name: ibanking-cicd-czc-pre-flow
+            description: Utilidades del flujo completo de despliegue czc/pre.
+            layer: infra
+            type: service
+            tags: [czc, pre, gcp, docker, deploy, cloudsql]
+            repo: "https://github.com/inteclatam/ibanking-cicd"
+            folder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            srcfolder: /home/sisu/Projects/IntecLatam/intec-banking/ibanking-cicd
+            commands:
+              extra:
+                - name: docs-manual-deploy
+                  description: Muestra la guia operativa del deploy manual en VM pre.
+                  cmd: sed -n '1,360p' docs/deploy-manual-vm-pre.md
+                  tags: [docs, czc, pre, deploy]
+                - name: docs-migrations
+                  description: Muestra la seccion Crezcamos pre de migraciones.
+                  cmd: sed -n '/^## Crezcamos pre/,$p' docs/migraciones.md
+                  tags: [docs, czc, pre, cloudsql, migrations]
+                - name: show-czc-tenant-config
+                  description: Muestra la configuracion no secreta del tenant czc.
+                  cmd: sed -n '1,180p' gcp/pipeline/tenants/czc.env
+                  tags: [czc, pre, config]
+                - name: ssh-vm
+                  description: Abre una sesion SSH IAP hacia ibanking-vm-pre.
+                  cmd: >-
+                    gcloud compute ssh ibanking-vm-pre
+                    --zone us-east1-c
+                    --project ibanking-pre
+                    --tunnel-through-iap
+                  tags: [czc, pre, gcp, iap, ssh]
+                - name: keycloak-admin-tunnel
+                  description: Abre tunel local hacia Keycloak admin sin exponerlo a internet.
+                  cmd: >-
+                    gcloud compute ssh ibanking-vm-pre
+                    --zone us-east1-c
+                    --project ibanking-pre
+                    --tunnel-through-iap
+                    -- -L 8080:127.0.0.1:8080
+                  tags: [czc, pre, gcp, iap, keycloak, tunnel]
+                - name: vm-compose-config
+                  description: Renderiza compose.external-db.yml en la VM sin levantar servicios.
+                  cmd: >-
+                    gcloud compute ssh ibanking-vm-pre
+                    --zone us-east1-c
+                    --project ibanking-pre
+                    --tunnel-through-iap
+                    --command='cd /opt/ibanking/docker &&
+                    docker compose --env-file .env.crezcamos-pre
+                    -f compose.external-db.yml
+                    config >/tmp/ibanking-external-db-pre.config &&
+                    echo /tmp/ibanking-external-db-pre.config'
+                  tags: [czc, pre, compose, config, vm]
+                - name: vm-docker-ps
+                  description: Lista contenedores activos en la VM.
+                  cmd: >-
+                    gcloud compute ssh ibanking-vm-pre
+                    --zone us-east1-c
+                    --project ibanking-pre
+                    --tunnel-through-iap
+                    --command='docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"'
+                  tags: [czc, pre, docker, vm]
+                - name: vm-health
+                  description: Valida respuestas HTTP de EB, SM y BFF por los dominios publicos.
+                  cmd: >-
+                    gcloud compute ssh ibanking-vm-pre
+                    --zone us-east1-c
+                    --project ibanking-pre
+                    --tunnel-through-iap
+                    --command='set -Ee;
+                    curl -I https://ibanking.probamos.co/;
+                    curl -I https://ibanking-admin.probamos.co/;
+                    curl -I https://ibanking-api.probamos.co/bff/csrf'
+                  tags: [czc, pre, health, domains, vm]
+                - name: vm-logs-proxy
+                  description: Muestra logs recientes de Caddy y Traefik API gateway.
+                  cmd: >-
+                    gcloud compute ssh ibanking-vm-pre
+                    --zone us-east1-c
+                    --project ibanking-pre
+                    --tunnel-through-iap
+                    --command='docker logs caddy --tail 120;
+                    docker logs ibanking-api --tail 120'
+                  tags: [czc, pre, logs, proxy, vm]
+parameters:
+  - theme: gruvbox
